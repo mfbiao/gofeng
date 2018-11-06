@@ -5,28 +5,38 @@ import (
 	"io"
 	"encoding/binary"
 	"math/rand"
+	"time"
+	"fmt"
 )
+var startTime  time.Time
+
+func Init(){
+	startTime = time.Now()
+
+}
 
 func ArraySource(a ...int) chan int{
-	out := make(chan int)
+	out := make(chan int,1024)
 	go func(){
 		for _,v := range a{
 			out <-v
 		}
 		close(out)
 	}()
-    return out
+	return out
 }
 
 func InMemSort(in <-chan int) <-chan int{
-	out := make(chan int)
+	out := make(chan int,1024)
 	go func(){
-		a := [] int{}
-		for v := range in{
+		a := []int{}
+		for v := range in {
 			a = append(a ,v)
 		}
+		fmt.Println("Read done:",time.Now().Sub(startTime))
 		sort.Ints(a)
-		for _,v := range a{
+		fmt.Println("InMemSort done:",time.Now().Sub(startTime))
+		for _,v := range a {
 			out <- v
 		}
 		close(out)
@@ -35,7 +45,7 @@ func InMemSort(in <-chan int) <-chan int{
 }
 
 func Merge(in1,in2 <-chan int) chan int{
-	out := make(chan int)
+	out := make(chan int,1024)
 	go func(){
 		v1,ok1 := <-in1
 		v2,ok2 := <-in2
@@ -48,23 +58,26 @@ func Merge(in1,in2 <-chan int) chan int{
 				v2 ,ok2 = <-in2
 			}
 		}
-        close(out)
+		close(out)
+		fmt.Println("Merge done:",time.Now().Sub(startTime))
 	}()
 	return out
 }
 
 
-func ReaderSource(reader io.Reader) <-chan int{
-	out := make(chan int)
+func ReaderSource(reader io.Reader,chunckSize int) <-chan int{
+	out := make(chan int,1024)
 	go func(){
 		buffer := make([]byte,8)
+		bytesRead := 0
 		for{
 			n, err := reader.Read(buffer)
+			bytesRead += n
 			if n > 0 {
 				v := int(binary.BigEndian.Uint64(buffer))
 				out <- v
 			}
-			if err != nil{
+			if err != nil || (chunckSize !=-1 && bytesRead >= chunckSize){
 				break
 			}
 		}
@@ -74,7 +87,7 @@ func ReaderSource(reader io.Reader) <-chan int{
 }
 
 func WriteSink(writer io.Writer,in <-chan int){
-	for v := range in{
+	for v := range in {
 		buffer := make([]byte,8)
 		binary.BigEndian.PutUint64(buffer,uint64(v))
 		writer.Write(buffer)
@@ -87,18 +100,16 @@ func RandomSource(count int) <-chan int{
 		for i :=0;i <count ;i++ {
 			out <- rand.Int()
 		}
-        close(out)
+		close(out)
 	}()
 
 	return out
 }
 
 func MergeN (inputs ...<-chan int) <-chan int{
-    if len(inputs) == 1{
-    	return inputs[0]
+	if len(inputs) == 1 {
+		return inputs[0]
 	}
-	m := len(inputs)
-	return Merge(
-		MergeN(inputs[:m]...),
-		MergeN(inputs[m:]...))
+	m := len(inputs)/2
+	return Merge(MergeN(inputs[:m]...), MergeN(inputs[m:]...))
 }
